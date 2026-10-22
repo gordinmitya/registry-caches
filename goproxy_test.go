@@ -84,6 +84,7 @@ func TestGoproxy(t *testing.T) {
 		case "/github.com/!azure/x/@v/v1.0.0-!r!c1.zip":
 			http.Redirect(w, r, "https://storage.googleapis.com/proxy-golang-org-prod/abc-module.zip?Expires=1&Signature=sig", http.StatusFound)
 		case "/golang.org/x/text/@v/list", "/golang.org/x/text/@v/master.info":
+			w.Header().Set("Cache-Control", "public, max-age=60") // as proxy.golang.org
 			io.WriteString(w, "v0.3.0\n")
 		case "/gone.test/m/@latest":
 			http.Error(w, "gone", http.StatusGone)
@@ -200,14 +201,14 @@ func TestGoproxy(t *testing.T) {
 		t.Fatalf("artifact 404 cached")
 	}
 
-	// Mutable metadata: meta zone, 5m; non-canonical queries too.
+	// Mutable metadata: meta zone, upstream's max-age; non-canonical queries too.
 	for _, p := range []string{"/golang.org/x/text/@v/list", "/golang.org/x/text/@v/master.info"} {
 		resp, _ = fetch(p)
 		expect(t, resp, 200, "MISS")
 		resp, _ = fetch(p)
 		expect(t, resp, 200, "HIT")
 	}
-	if n, ttl := stored("goproxy-meta"), ttlIn("goproxy-meta"); n != 2 || ttl > 5*time.Minute {
+	if n, ttl := stored("goproxy-meta"), ttlIn("goproxy-meta"); n != 2 || ttl > time.Minute {
 		t.Fatalf("meta zone: %d entries, ttl %v", n, ttl)
 	}
 	// 404/410 on metadata: cached briefly, body kept.

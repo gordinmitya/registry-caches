@@ -1020,7 +1020,7 @@ func TestGzipUpstream(t *testing.T) {
 // relayed answers only privately.
 func TestCacheControl(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "max-age=3600") // files and 404s ignore it
 		if strings.HasSuffix(r.URL.Path, "/missing") {
 			http.Error(w, "nope", 404)
 			return
@@ -1817,5 +1817,34 @@ func TestLocalNoStore(t *testing.T) {
 	resp, _ := mustGet(t, cl, "POST", url+"/m/a")
 	if resp.StatusCode != 405 || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("POST: %d %v", resp.StatusCode, resp.Header)
+	}
+}
+
+func TestFreshFor(t *testing.T) {
+	def := 7 * time.Minute
+	for _, tc := range []struct {
+		cc, age string
+		want    time.Duration
+	}{
+		{"", "", def},
+		{"public", "", def},
+		{"public, max-age=60", "", time.Minute},
+		{"max-age=600, public", "586", 14 * time.Second},
+		{"max-age=300", "900", 0},
+		{"max-age=60, s-maxage=\"120\"", "20", 100 * time.Second},
+		{"max-age=31536000", "", time.Hour},
+		{"no-cache, max-age=600", "", 0},
+		{"max-age=bogus", "", def},
+	} {
+		h := http.Header{}
+		if tc.cc != "" {
+			h.Set("Cache-Control", tc.cc)
+		}
+		if tc.age != "" {
+			h.Set("Age", tc.age)
+		}
+		if got := freshFor(h, def); got != tc.want {
+			t.Errorf("freshFor(%q, Age %q) = %v, want %v", tc.cc, tc.age, got, tc.want)
+		}
 	}
 }

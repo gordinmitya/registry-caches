@@ -739,6 +739,37 @@ func wantsRefresh(r *http.Request) bool {
 	return false
 }
 
+// freshFor is how long upstream lets metadata be reused: s-maxage or max-age
+// less Age, so our copy is never older than upstream allows. def when it
+// says nothing; capped at an hour against a misconfigured origin.
+func freshFor(h http.Header, def time.Duration) time.Duration {
+	maxAge, sMaxAge := -1, -1
+	for _, v := range h.Values("Cache-Control") {
+		for d := range strings.SplitSeq(v, ",") {
+			name, arg, _ := strings.Cut(strings.ToLower(strings.TrimSpace(d)), "=")
+			n, err := strconv.Atoi(strings.Trim(arg, `"`))
+			switch {
+			case name == "no-cache" || name == "no-store":
+				return 0
+			case name == "max-age" && err == nil && n >= 0:
+				maxAge = n
+			case name == "s-maxage" && err == nil && n >= 0:
+				sMaxAge = n
+			}
+		}
+	}
+	if sMaxAge >= 0 {
+		maxAge = sMaxAge
+	}
+	if maxAge < 0 {
+		return def
+	}
+	if age, err := strconv.Atoi(h.Get("Age")); err == nil && age > 0 {
+		maxAge -= age
+	}
+	return min(time.Duration(max(maxAge, 0))*time.Second, time.Hour)
+}
+
 // fill fetches up for a missing or expired entry (f, m: the expired one, if
 // any, else nil), answers the client and stores what may be stored.
 func (c *Cache) fill(w http.ResponseWriter, r *http.Request, rt *rule, up, accept, path string, f *os.File, m *meta) {
@@ -858,7 +889,7 @@ func (c *Cache) fill(w http.ResponseWriter, r *http.Request, rt *rule, up, accep
 			return
 		}
 		nm := *m
-		nm.URL, nm.Expires = up, time.Now().Add(rt.ttl)
+		nm.URL, nm.Expires = up, time.Now().Add(freshFor(resp.Header, rt.ttl))
 		if v := resp.Header.Get("ETag"); v != "" {
 			nm.ETag = v
 		}
@@ -872,7 +903,7 @@ func (c *Cache) fill(w http.ResponseWriter, r *http.Request, rt *rule, up, accep
 	case st == http.StatusOK && rt.zone.meta, (st == http.StatusNotFound || st == http.StatusGone) && rt.negTTL > 0:
 		limit, ttl := int64(maxSmall), rt.negTTL
 		if st == http.StatusOK {
-			limit, ttl = maxBuffer, rt.ttl
+			limit, ttl = maxBuffer, freshFor(resp.Header, rt.ttl)
 			if !acquire(ctx, c.bufSem) {
 				fail(http.StatusServiceUnavailable, "too many upstream fetches", errors.New("buffer limit"))
 				return

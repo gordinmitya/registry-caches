@@ -69,9 +69,9 @@ An object may take at most half its zone; bigger ones are proxied uncached.
 
 - Files (crates, module zips, tarballs, wheels) are immutable: kept a year,
   streamed to the client while being stored, published only when complete.
-- Metadata (index files, packuments, simple pages) is fetched whole, lives
-  5–10 minutes, then is revalidated with the origin's validators. 404s are
-  cached for a minute.
+- Metadata (index files, packuments, simple pages) is fetched whole, kept
+  for the upstream's `max-age` minus `Age` (5–10 minutes when it sends
+  none, at most an hour), then revalidated. 404s are cached for a minute.
 - A request for a key that is already being fetched gets the stale copy if
   there is one, otherwise it is relayed uncached. There is no coalescing.
 - Upstream 429/5xx or network errors serve the stale copy. After a network
